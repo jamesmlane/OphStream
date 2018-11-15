@@ -42,19 +42,62 @@ import os
 import sys
 import glob
 
-def PresentDay(run_num,unitsys,choose_snap=False,background='uniform'):
+def PresentDay(
+                gc=None,
+                unitsys=None,
+                run_num=None,
+                output_dir='./stream_params',
+                snapshot=None,
+                background='uniform'):
     '''
     PresentDay:
 
     Perform the present day analysis and comparison to the Bernard+14 data.
 
     Args:
+        gc (OphstreamRun class): class with properties of progenitor and run.
+        unitsys (string): The system of units used in the simulation. [None]
         run_num (string): The run identification number.
-        unitsys (string): The system of units used in the simulation.
+        output_dir (string): The name of the catalog of parameters to output,
+            should have .FIT ending. Note gc.filename will automatically
+            be appended ['./stream_params']
         choose_snap (Boolean): Use a selected snapshot which is found in the
             present directory [False]
+        snapshot (string): The snapshot to use. If none then use the snapshot
+                            in the present directory [None].
         background (string): The type of noise to add (background or mask)
     '''
+
+    ############################################################################
+    # Intro
+    ############################################################################
+
+    # Handle gc object vs unitsys
+    if unitsys == None and gc == None:
+        sys.exit('Must define either unitsys [string] or gc [object]')
+    ##fi
+    if unitsys != None and run_num == None:
+        sys.exit('Must define both unitsys and run_num!')
+
+    #Set units, assume that if unitsys is defined that's what we want.
+    if unitsys != None:
+        code2Myr,code2kpc,code2kms,code2Msol = ophstream.units.GetConversions(unitsys)
+    else:
+        code2Myr = gc.code2Myr
+        code2kpc = gc.code2kpc
+        code2kms = gc.code2kms
+        code2Msol = gc.code2Msol
+    ##ie
+
+    # Get the output absolute path, automatically add gc.filename
+    if output_dir[-len(gc.filename):] != gc.filename:
+        output_dir += '/'+gc.filename
+    output_path = os.path.abspath(output_dir)
+
+    # Make sure directory infrastructure exists
+    if os.path.isdir(output_path) == False:
+        sys.exit(snap_dir+' does not exist, must run the simulation first')
+    ##fi
 
     ############################################################################
     # Keywords
@@ -80,19 +123,17 @@ def PresentDay(run_num,unitsys,choose_snap=False,background='uniform'):
     # Read data, perform calculations
     ############################################################################
 
-    #Set units
-    code2Myr,code2kpc,code2kms,code2Msol = ophstream.units.GetConversions(unitsys)
-
     # Get a list of hdf5 output files
-    if choose_snap == True:
+    if snapshot == None:
         snap_files = sorted(glob.glob('./*.hdf5'))
+        ophstream.misc.sort_nicely(snap_files)
+        snap_file = snap_files[-1]
     else:
-        snap_files = sorted(glob.glob('../*.hdf5'))
-    n_snap = -1
-    ophstream.misc.sort_nicely(snap_files)
+        snap_file = snapshot
+    ##ie
 
     # Read in the specified file:
-    abs_path = os.path.abspath(snap_files[n_snap])
+    abs_path = os.path.abspath(snap_file)
     data = Snapdata(abs_path)
     n_part = data.npart
     p_mass = data.p_mass * code2Msol
@@ -207,7 +248,9 @@ def PresentDay(run_num,unitsys,choose_snap=False,background='uniform'):
     ###i
 
     # Longitude in the new coordinate system is the arc length along the curve
-    initial_long = np.median(gl)
+    adjusted_gl = np.array(gl)
+    adjusted_gl[np.where(adjusted_gl>180)[0]] = adjusted_gl[np.where(adjusted_gl>180)[0]]-360
+    initial_long = np.median(adjusted_gl)
     stream_long = np.zeros(n_part)
     stream_long_oph = np.zeros(n_oph)
     arclen_args = (wquada,wquadb)
@@ -225,9 +268,15 @@ def PresentDay(run_num,unitsys,choose_snap=False,background='uniform'):
     ################################################################################
 
     # Create output files.
-    outplots = PdfPages('run_'+run_num+'_plots_gallb.pdf')
+    if unitsys != None:
+        outplots = PdfPages('run_'+run_num+'_ophplots.pdf')
+        stat_file = open(unitsys+'_run_'+run_num+'_stream_params.txt','w')
+    else:
+        outplots = PdfPages(output_path+'/plots_'+gc.filename+'.pdf')
+        stat_file = open(output_path+'/stream_params_'+gc.filenames+'.txt','r')
+    ##ie
+
     fig = plt.figure(figsize=(8,8))
-    stat_file = open('run_'+run_num+'_stream_params.txt','w')
 
     # Plot stream in galactic coordinates.
 
@@ -283,7 +332,7 @@ def PresentDay(run_num,unitsys,choose_snap=False,background='uniform'):
     if background == 'uniform':
         ax_bg = np.random.normal(loc=8E-5, scale=1.5E-5, size=ax_hist.shape)
         ax_hist += ax_bg
-        ax_bg_im = ax.imshow(ax_hist, cmap=cm, norm=LogNorm(vmin=1E-5, vmax=1E-3),
+        ax_bg_im = ax.imshow(ax_hist, cmap=cm, norm=LogNorm(vmin=5E-5, vmax=5E-4),
                                 extent=ax_ext, interpolation='nearest')
     ##fi
 
@@ -411,6 +460,7 @@ def PresentDay(run_num,unitsys,choose_snap=False,background='uniform'):
     masked_vdisp = np.ma.masked_invalid(ax_hist)
     masked_vdisp[ax_hist_belownoise] = np.ma.masked
     stream_vdisp = np.ma.average(masked_vdisp, weights=dispersion_weights)
+    stream_vdisp_err = np.sqrt(np.ma.average(np.square(masked_vdisp-stream_vdisp), weights=dispersion_weights))
     #stat_file.write('Total dispersion: '+str(stream_vdisp)+'\n\n')
 
     ################################################################################
@@ -642,9 +692,55 @@ def PresentDay(run_num,unitsys,choose_snap=False,background='uniform'):
     stat_file.write(str(wfwhm_err)+'\n\n')
     stat_file.write(str(wsum)+'\n')
     stat_file.write(str(wsum_err)+'\n\n')
-    stat_file.write(str(stream_vdisp))
+    stat_file.write(str(stream_vdisp)+'\n')
+    stat_file.write(str(stream_vdisp_err))
 
     outplots.close()
+
+    ################################################################################
+
+    # Now write output file containing all information
+
+    out_names = (   "Name",
+                    "Mass",
+                    "Radius_3D",
+                    "LSum",
+                    "LSum_Err",
+                    "WSum",
+                    "WSum_Err",
+                    "Length",
+                    "Length_Err",
+                    "Width",
+                    "Width_Err",
+                    "Sigma",
+                    "Sigma_Err")
+
+    out_data_types = (  "str","float","float","float","float","float","float",
+                        "float","float","float","float","float","float")
+
+    out_cols = (    gc.filename,
+                    gc.mass,
+                    gc.radius_3d,
+                    lsum,
+                    lsum_err,
+                    wsum,
+                    wsum_err,
+                    llen,
+                    llen_err,
+                    wfwhm,
+                    wfwhm_err,
+                    stream_vdisp,
+                    stream_vdisp_err)
+
+    for i,val in enumerate(out_cols):
+        out_cols[i] = np.array([val])
+    #for
+    out_data = table.Table( out_cols,
+                            names = out_names,
+                            dtype = out_data_dtypes)
+    out_data.write(output_path+'/stream_params_'+gc.filename+'.FIT',
+                        format='fits', overwrite=True)
+
 
     ################################################################################
 

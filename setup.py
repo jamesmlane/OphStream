@@ -19,6 +19,9 @@ import numpy as np
 import ophstream.units
 import subprocess
 import os
+import sys
+import pdb
+from snapdata import Snapdata
 
 def MakeRecenter(ic, gc, apo):
     '''
@@ -53,35 +56,7 @@ def MakeRecenter(ic, gc, apo):
         _apk_temp = GetClass4ICs(gc)
     ##fi
 
-    # Get the correct apocenter number
-    apk = _apk_temp[apo-1]
 
-    print('\n==============')
-    print('WRITING MAIN.C')
-    print('==============\n')
-
-    for i,line in enumerate(main_in):
-        # Add the offsets.
-        if i == 90:
-            main_out.write('  dxi_off[0] = '+str( apk[0] )+';\n')
-            main_out.write('  dxi_off[1] = '+str( apk[1] )+';\n')
-            main_out.write('  dxi_off[2] = '+str( apk[2] )+';\n')
-            main_out.write('  dvi_off[0] = '+str( apk[3] )+';\n')
-            main_out.write('  dvi_off[1] = '+str( apk[4] )+';\n')
-            main_out.write('  dvi_off[2] = '+str( apk[5] )+';\n')
-            print('Apocenter '+str(apo)+':')
-            print('  dxi_off[0] = '+str( apk[0] )+';' )
-            print('  dxi_off[1] = '+str( apk[1] )+';' )
-            print('  dxi_off[2] = '+str( apk[2] )+';' )
-            print('  dvi_off[0] = '+str( apk[3] )+';' )
-            print('  dvi_off[1] = '+str( apk[4] )+';' )
-            print('  dvi_off[2] = '+str( apk[5] )+';\n' )
-        ##fi
-        main_out.write(line)
-    ###i
-
-    # Move new main.c into place.
-    subprocess.call('mv main.c source/',shell=True)
 #def
 
 def RunRecenter(gc,run):
@@ -119,7 +94,7 @@ def RunRecenter(gc,run):
 
     recenter_good = input('\nRecentering successfull? name '+gc+'_run_'+run+'? [y/n] ... ')
     if recenter_good == 'y':
-        subprocess.call('cp out/recentered_999.hdf5 ../Transfer/'+gc+'_run_'+run+'.hdf5', shell=True)
+        subprocess.call('cp out/recentered_999.hdf5 ../../../gadget/initial_conditions/plummer/IC4/'+gc+'_run_'+run+'.hdf5', shell=True)
     ##fi
     subprocess.call('rm -rf out/*', shell=True)
     print('Done...')
@@ -134,16 +109,13 @@ def CheckRecentering(filename):
         filename (string) - Name of the .hdf5 recentered file.
     '''
 
-    import os
-    from snapdata import Snapdata
-
     path = os.path.abspath(filename)
     data = Snapdata(path)
 
     print('Recentered median positions (code):')
-    print('x: '+str(np.median(data.x)))
-    print('y: '+str(np.median(data.y)))
-    print('z: '+str(np.median(data.z)))
+    print('x:  '+str(np.median(data.x)))
+    print('y:  '+str(np.median(data.y)))
+    print('z:  '+str(np.median(data.z)))
     print('vx: '+str(np.median(data.vx)))
     print('vy: '+str(np.median(data.vy)))
     print('vz: '+str(np.median(data.vz)))
@@ -152,15 +124,11 @@ def CheckRecentering(filename):
 
 def CheckSigma(filename):
     '''
-    Confirm that the recentering program placed the globular cluster at the
-    correct position.
+    Confirm that the dynamically correct globular cluster has been created.
 
     Args:
         filename (string) - Name of the .hdf5 recentered file.
     '''
-
-    import os
-    from snapdata import Snapdata
 
     path = os.path.abspath(filename)
     data = Snapdata(path)
@@ -170,6 +138,55 @@ def CheckSigma(filename):
     print('sigma vy: '+str(np.std(data.vy)))
     print('sigma vz: '+str(np.std(data.vz)))
 #def
+
+def GetRhalf(filename, code2kpc=None, gc=None):
+    '''
+    Get the half-mass radius in pc for a recentered globular cluster.
+
+    Args:
+        filename (string) - Name of the .hdf5 recentered file.
+        gc (string) - Globular cluster model.
+
+    Output:
+        The measured half-mass radius in pc.
+    '''
+
+    if code2kpc == None and code2kpc == None:
+        sys.exit('No parameters supplied to GetTimesIC4')
+    elif code2kpc == None:
+        code2kpc,_,_,_ = ophstream.units.GetConversions(gc)
+    ##fi
+
+    path = os.path.abspath(filename)
+    data = Snapdata(path)
+    r_center = np.sqrt( np.square( data.x - np.median(data.x) ) +
+                        np.square( data.y - np.median(data.y) ) +
+                        np.square( data.z - np.median(data.z) ) )
+    r_sorted = np.sort(r_center) * code2kpc * 1000
+    print('Rhalf: '+str(r_sorted[ int(len(r_sorted)/2) ])+' pc')
+#def
+
+def CheckSigmaRHalf(filename,gc):
+    '''
+    Check the, more accurate, velocity dispersion within the half-mass radius.
+
+    Args:
+        filename (string) - Name of the .hdf5 recentered file.
+        gc (string) - Globular cluster model.
+    '''
+
+    path = os.path.abspath(filename)
+    data = Snapdata(path)
+    rhalf = 1.3 # In our coordinate system because 'a' is the scale
+    r_center = np.sqrt( np.square( data.x - np.median(data.x) ) +
+                        np.square( data.y - np.median(data.y) ) +
+                        np.square( data.z - np.median(data.z) ) )
+    inside_rhalf = np.where( r_center < rhalf )
+
+    print('Recentered velocity dispersions within half-mass radius (code):')
+    print('sigma vx: '+str(np.std(data.vx[inside_rhalf])))
+    print('sigma vy: '+str(np.std(data.vy[inside_rhalf])))
+    print('sigma vz: '+str(np.std(data.vz[inside_rhalf])))
 
 def GenPointMassIC(filename,coords):
     '''
@@ -197,6 +214,7 @@ def GenRecenterParms(ic,gc):
     Args:
         ic (int) - The class of apocenter to return (2,3)
         gc (string) - The globular cluster unit system.
+        return (boolean) - Return the parameters
     Returns:
         None
     Outputs:
@@ -275,7 +293,7 @@ def GenPotParms(gc):
     print( 'dExt '+str(Ah) )
 #def
 
-def GenPotParmsIC4(gc):
+def GenPotParmsIC4(code2kpc=None,code2Msol=None,gc=None,output=False):
     '''
     GetPotParms:
     Generate a formatted potential parameter string block for the Gadget-2
@@ -283,13 +301,24 @@ def GenPotParmsIC4(gc):
 
     Args:
         gc (string) - The globular cluster unit system.
+        output (Bool) - Output the values instead?
     Returns:
         None
     Outputs:
         Formatted string blocks
     '''
 
-    _,code2kpc,_,code2Msol = ophstream.units.GetConversions(gc)
+    if code2kpc == None and code2Msol == None and gc == None:
+        sys.exit('No arguments supplied for GenPotParmsIC4')
+    ##fi
+
+    if gc == None and ( code2Msol == None or code2kpc == None ):
+        sys.exit('Must supply arguments to both code2kpc and code2Msol if not supplying gc')
+    ##fi
+
+    if code2kpc == None and code2Msol == None:
+        _,code2kpc,_,code2Msol = ophstream.units.GetConversions(gc)
+    ##fi
 
     # Masses in Msol
     Md = 6.8E10 / code2Msol
@@ -303,19 +332,46 @@ def GenPotParmsIC4(gc):
     Rs = 16 / code2kpc
 
     # Unchanging parameters
-    conc = 15.3
+    conc = 15.3 # Fixed from Bovy+2015
     alpha = 1.8
 
-    print('Potential Parameters: '+gc)
-    print( 'MdExt    '+str(Md) )
-    print( 'MbExt    '+str(Mb) )
-    print( 'MhvirExt '+str(Mhvir) )
-    print( 'aExt     '+str(Ad) )
-    print( 'bExt     '+str(Bd) )
-    print( 'cExt     '+str(Rc) )
-    print( 'dExt     '+str(Rs) )
-    print( 'concExt  '+str(conc) )
-    print( 'alphaExt '+str(alpha) )
+    if output == False:
+        print('Potential Parameters:')
+        print( 'MdExt    '+str(Md) )
+        print( 'MbExt    '+str(Mb) )
+        print( 'MhvirExt '+str(Mhvir) )
+        print( 'aExt     '+str(Ad) )
+        print( 'bExt     '+str(Bd) )
+        print( 'cExt     '+str(Rc) )
+        print( 'dExt     '+str(Rs) )
+        print( 'concExt  '+str(conc) )
+        print( 'alphaExt '+str(alpha) )
+    ##fi
+    if output == True:
+        return Md,Mb,Mhvir,Ad,Bd,Rc,Rs,conc,alpha
+    ##fi
+#def
+
+def GetTimesIC4(apo,code2Myr=None,gc=None):
+    '''
+    GetTimesIC4:
+    Generate class 4 simulation lengths.
+
+    Args:
+        gc (string) - The globular cluster unit system.
+        apo (string) - The IC4 apocenter number.
+
+    Returns
+        t (float) - The simulation length in code units
+    '''
+    if code2Myr == None and code2Myr == None:
+        sys.exit('No parameters supplied to GetTimesIC4')
+    elif code2Myr == None:
+        code2Myr,_,_,_ = ophstream.units.GetConversions(gc)
+    ##fi
+
+    ic4_apo_times = np.array([123.9691,360.9102,600.8504,836.7917])
+    return ic4_apo_times[ int(apo-1) ] / code2Myr
 #def
 
 def GetClass2ICs(gc):
@@ -381,7 +437,7 @@ def GetClass3ICs(gc):
     return [apo1,apo2,apo3,apo4]
 #def
 
-def GetClass4ICs(gc):
+def GetClass4ICs(code2kpc,code2kms):
     '''
     GetApo2ICs:
     Generate class 2 apocenters in the correct units.
@@ -392,7 +448,6 @@ def GetClass4ICs(gc):
         apos (list) - list of ic numpy arrays [x,y,z,vx,vy,vz], going forward
                         in time, in kpc and km/s
     '''
-    _,code2kpc,code2kms,_ = ophstream.units.GetConversions(gc)
 
     apo1 = np.array([-2.7111,  -0.866,  -16.4423, -71.5236,	 17.2722,  11.7234])
     apo2 = np.array([-13.0558,  4.3714,	 9.1938,   49.1522, -8.1264,   74.042])

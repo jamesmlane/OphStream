@@ -142,8 +142,36 @@ def GetConversions(unitsys):
         code2kms = np.sqrt( 0.004301 * code2Msol / code2pc )
         code2Myr = 0.978 * code2pc / code2kms
         code2kpc = code2pc / 1000
+    elif unitsys == 'GC15':
+        rh = 36
+        code2Msol = 1E4
+        code2pc = rh/1.3
+        code2kms = np.sqrt( 0.004301 * code2Msol / code2pc )
+        code2Myr = 0.978 * code2pc / code2kms
+        code2kpc = code2pc / 1000
     elif unitsys == 'GC16':
         rh = 14
+        code2Msol = 2.0E3
+        code2pc = rh/1.3
+        code2kms = np.sqrt( 0.004301 * code2Msol / code2pc )
+        code2Myr = 0.978 * code2pc / code2kms
+        code2kpc = code2pc / 1000
+    elif unitsys == 'GC20':
+        rh = 90 #3D
+        code2Msol = 2.0E4
+        code2pc = rh/1.3
+        code2kms = np.sqrt( 0.004301 * code2Msol / code2pc )
+        code2Myr = 0.978 * code2pc / code2kms
+        code2kpc = code2pc / 1000
+    elif unitsys == 'GC21':
+        rh = 28 #3D
+        code2Msol = 1.0E4
+        code2pc = rh/1.3
+        code2kms = np.sqrt( 0.004301 * code2Msol / code2pc )
+        code2Myr = 0.978 * code2pc / code2kms
+        code2kpc = code2pc / 1000
+    elif unitsys == 'GC22':
+        rh = 90 #3D
         code2Msol = 2.0E3
         code2pc = rh/1.3
         code2kms = np.sqrt( 0.004301 * code2Msol / code2pc )

@@ -17,6 +17,18 @@ __author__ = "James Lane"
 import numpy as np
 import scipy.linalg
 from pykdtree.kdtree import KDTree
+from astropy import table
+# from ophstream.autogadget import OphstreamRun
+from astropy import coordinates as coords
+from astropy import units
+from scipy.optimize import curve_fit,newton
+from scipy.integrate import quad as quad_integrate
+from snapdata import Snapdata
+import ophstream.units
+import ophstream.tasks
+import sys
+import os
+import pdb
 
 def CalcDensity2D(x,y,mass,nbranch=32):
     '''
@@ -132,6 +144,251 @@ def CalcTdynamical():
     return
 #def
 
+def StackCatalog(filelist,prog_names=None,prog_mass=None,prog_radius=None,prog_vdisp=None):
+    '''
+    Stack catalogs of observed stream information.
+
+    Args:
+        filelist (array) - The list of files to stack
+        prog_names (str array) - N-d array of progenitor names
+        prog_mass (flt array) - N-d array of progenitor masses in Msol
+        prog_radius (flt arry) - N-d array of progenitor 3d r1/2 in pc
+        prog_vdisp (flt array) - N-d array of progenitor 1d vdisp in km/s
+
+    Returns:
+        None
+
+    Outputs:
+        catalog (.txt) - Catalog of properties for all inputs
+    '''
+
+    n_files = len(filelist)
+    if (len(prog_names) != n_files) or (len(prog_mass) != n_files) or (len(prog_radius) != n_files) or (len(prog_vdisp) != n_files):
+        sys.exit('Not all input arrays of the same length as filelist')
+    ##fi
+
+    meas_data = np.empty((n_files,10))
+    import pdb
+    for i in range(n_files):
+        meas_data[i,:] = np.genfromtxt(filelist[i])
+    ###i
+    fmt_string = ('%4s','%4.2f','%4.2f','%4.2f','%4.2f','%4.2f','%4.2f','%4.2f','%4.2f','%4.2f','%4.2f','%4.2f','%4.2f','%4.2f')
+    pdb.set_trace()
+    np.savetxt('catalog_out.txt', np.array([prog_names,prog_mass,prog_radius,prog_vdisp,meas_data.T[:]]).T, fmt=fmt_string)
+    pdb.set_trace()
+#def
+
+def StackCatalogAP(filelist,prog_names=None,prog_mass=None,prog_radius=None,prog_vdisp=None):
+    '''
+    Stack catalogs of observed stream information with astropy.
+
+    Args:
+        filelist (array) - The list of files to stack
+        prog_names (str array) - N-d array of progenitor names
+        prog_mass (flt array) - N-d array of progenitor masses in Msol
+        prog_radius (flt arry) - N-d array of progenitor 3d r1/2 in pc
+        prog_vdisp (flt array) - N-d array of progenitor 1d vdisp in km/s
+
+    Returns:
+        None
+
+    Outputs:
+        catalog (.txt) - Catalog of properties for all inputs
+    '''
+
+    n_files = len(filelist)
+    if (len(prog_names) != n_files) or (len(prog_mass) != n_files) or (len(prog_radius) != n_files) or (len(prog_vdisp) != n_files):
+        sys.exit('Not all input arrays of the same length as filelist')
+    ##fi
+
+    meas_data = np.empty((n_files,10))
+
+
+
+    import pdb
+    for i in range(n_files):
+        meas_data[i,:] = np.genfromtxt(filelist[i])
+    ###i
+
+    meas_names = (  'Name','Mass (Msol)','3D R1/2 (pc)','1D Vdisp (km/s)','Length (deg)','Length Error',
+                    'Length N (Nmsto)','Length N Error','Width (arcmin)','Width Error','Width N (Nmsto)',
+                    'Width N Error','Vdisp (km/s)','Vdisp Error')
+    # meas_fmts = {   'Name':'%.2f',
+    #                 'Mass':
+    #                 '3D R1/2':
+    #                 '1D Vdisp':
+    #                 'Length':
+    #                 'Length Error':
+    #                 'Length N':
+    #                 'Length N Error':'Width','Width Error','Width N',
+    #                                 'Width N Error','Vdisp','Vdisp Error'}
+    meas_table = Table( [ prog_names, prog_mass, prog_radius, prog_vdisp, meas_data.T ]
+                        , names=meas_names)
+    meas_table.write('Catalog_out.txt', format='ascii.fixed_width',
+                    overwrite=True)
+#def
+
+def StackCatalogsAutoGadget(filelist,
+                            output='./stream_params/autogadget_combined_catalog.FIT'):
+    '''
+    StackCatalogsAutoGadget:
+        Combine multiple autogadget catalogs of stream properties into one
+        stream property catalog.
+
+    Args:
+        filelist (str array) - Array of strings of filenames
+
+    Returns:
+        None
+
+    Outputs:
+        combined_catalog (astropy .FIT) - The combined catalog of stream
+            properties. Will by default be named autogadget_combined_catalog.FIT
+
+    '''
+    # Empty list for new catalogs array
+    catalogs = []
+    for i,filename in enumerate(filelist):
+        catalogs.append( table.Table.read(filename) )
+    ####
+
+    # Make the new catalog
+    new_catalog = table.vstack(catalogs)
+    new_catalog.write('./autogadget_combined_catalog.FIT', format='fits',
+                        overwrite=True)
+
+#def
+
+def GetStreamLatLong(snap_file, conversions, output=False):
+    '''
+    GetStreamLatLong:
+        Convert a snapshot into binned histograms of the data in stream-spline
+        latitude and longitude. Stream equator is defined by a quadratic
+        best-fit.
+
+    Args:
+        snap_file (hdf5) - The snapshot to convert
+        conversions (arr) - Array of code2physical conversion factors of form:
+            [code2kpc, code2kms, code2Msol, code2Myr]
+        output (bool) - Output to file or return (2 variables) [False]
+
+    Returns:
+        None
+
+    Output:
+        longlat (2xn arr) - Array of stream-based longitudes and latitudes
+            (respectively in that order)
+
+    '''
+
+    # First get the conversion factors
+    if len(conversions) != 4:
+        sys.exit('The conversions array is not length 4')
+    ##fi
+    code2kpc, code2kms, code2Msol, code2Myr = conversions[:]
+
+    # Read in the specified file and extract particle data:
+    abs_path = os.path.abspath(snap_file)
+    data = Snapdata(abs_path)
+    n_part = data.npart
+    p_mass = data.p_mass * code2Msol
+    x = data.x * code2kpc
+    y = data.y * code2kpc
+    z = data.z * code2kpc
+    vx = data.vx * code2kms
+    vy = data.vy * code2kms
+    vz = data.vz * code2kms
+    time = data.time * code2Myr
+
+    # Convert positions to l,b
+    galactocen_coords = coords.Galactocentric(x=x * units.kpc,
+                                              y=y * units.kpc,
+                                              z=z * units.kpc)
+    galactic_coords = galactocen_coords.transform_to(coords.Galactic)
+    gl = np.array(galactic_coords.l)
+    gb = np.array(galactic_coords.b)
+
+    # Calculate distance to sun in kpc, manually
+    dist = np.sqrt(np.square(x+8.3)+np.square(y)+np.square(z-0.027))
+
+    # Get surface density
+    surfdens = CalcDensity2D(gl,gb,p_mass)
+    surfdens_weights = np.power(surfdens,-3)
+
+    ################################################################################
+
+    # Fit the stream with a weighted quadratic:
+
+    # The quadratic function
+    def quad_func(x,a,b,c):
+        return a*np.power(x,2)+b*x+c
+    #def
+
+    # Weighted quadratic
+    where_quad_fit = np.where( (gl > 2) &
+                               (gl < 8) &
+                               (gb > 28) &
+                               (gb < 33) )[0]
+    wquad_popt,_ = curve_fit(quad_func,gl[where_quad_fit],gb[where_quad_fit],
+                            sigma=surfdens_weights[where_quad_fit])
+    wquada, wquadb, wquadc = wquad_popt
+    wquadgl = np.arange(0,10,0.1)
+    wquadgb = quad_func(wquadgl,wquada,wquadb,wquadc)
+
+    ################################################################################
+
+    # Use Newtons method to get the nearest neighbour point on the quadratic line to
+    # each point in the stream, then get arc length along the stream.
+
+    # Function to return dot product between quadratic point and stream point
+    def stream_quad_dot(l,streamx,streamy,a,b,c):
+        # Get the derivative at the quadratic point
+        quad_b = a*(l**2) + b*l + c
+        quad_slope = 2*a*l + b
+        quad_yint = quad_b-l*quad_slope
+        return l*(streamx-l) + (quad_b-quad_yint)*(streamy-quad_b)
+    #def
+
+    # Function to return arc length along the curve:
+    def stream_quad_arc(l,a,b):
+        return np.sqrt( 1 + np.square( 2*a*l + b ) )
+    #def
+
+    # Find the closest point on the quadratic to each stream point
+    close_l = np.zeros(n_part)
+    for i in range(n_part):
+        close_l[i] = newton(stream_quad_dot, gl[i], tol=0.001, maxiter=100,
+                            args=(gl[i],gb[i],wquada,wquadb,wquadc))
+    ###i
+    close_b = wquada*np.square(close_l) + wquadb*close_l + wquadc
+
+    # Latitude in the new coordinate system is the distance from the curve:
+    stream_lat = np.sqrt(np.square(close_l-gl)+np.square(close_b-gb))
+
+    # Get the sign of the latitude by seeing if the new point is lower than the
+    # curve.
+    for i in range(n_part):
+        if gb[i] < ( wquada*(gl[i])**2 + wquadb*gl[i] + wquadc ):
+            stream_lat[i] *= -1
+    ###i
+
+    # Longitude in the new coordinate system is the arc length along the curve
+    initial_long = np.median(gl)
+    stream_long = np.zeros(n_part)
+    arclen_args = (wquada,wquadb)
+    for i in range(n_part):
+        stream_long[i] = quad_integrate(stream_quad_arc, initial_long, gl[i],
+                                        args=arclen_args )[0]
+    ###i
+
+    # Now output to file or return depending on user keywords.
+    if output == True:
+        outarr = np.array([ stream_long, stream_lat ])
+        np.save(snap_file[:-5]+'_spline_latlon.npy', outarr)
+    else:
+        return np.array([ stream_long, stream_lat ])
+    ##ie
+#def
 
 def FitGreatCircle(x, y, z):
     '''
